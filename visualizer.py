@@ -18,6 +18,8 @@ objects = {}
 array = []
 keys = []
 isModified = True
+delta_frame = 40
+scene.frame_set(1)
 
 os.system('clear')
 
@@ -133,7 +135,6 @@ class Node():
         ob.name = name
         ob.show_name = True
         bpy.ops.object.mode_set(mode = "OBJECT")
-        return ob
         
     def moveTo(self, pos, delta_frame):
         print(self.ob)
@@ -144,12 +145,13 @@ class Node():
         bpy.ops.transform.translate(value = delta_path)
         self.ob.keyframe_insert(data_path = 'location', frame = scene.frame_current + delta_frame)
         self.ob.select = False
+        bpy.context.scene.frame_set(1)
         
     def remove(self):
         context.scene.objects.unlink(self.ob)
         bpy.data.objects.remove(self.ob)
         
-'''def initSceneProperties(scn):
+def initSceneProperties(scn):
  
     bpy.types.Scene.xCoord = FloatProperty(
         name = "X", 
@@ -166,40 +168,60 @@ class Node():
         description = "Z coordinate of the object")
     scn["zCoord"] = 0.0
  
-    bpy.types.Scene.DropDownList = EnumProperty(
-        items = [("NULL", "NULL", "It seems data hasn't been received yet")],
-        name = "Objects")
-    scn['DropDownList'] = "NULL"
- 
-initSceneProperties(bpy.context.scene)'''
+initSceneProperties(bpy.context.scene)
 
-'''class MenuPanel(bpy.types.Panel):
+def scene_update(context):
+    scn = bpy.context.scene
+    if bpy.data.objects.is_updated:
+        print("One or more objects were updated!")
+        
+        ob = bpy.context.object
+        scn.xCoord = ob.location.x
+        scn.yCoord = ob.location.y
+        scn.zCoord = ob.location.z
+bpy.app.handlers.scene_update_post.append(scene_update)
+
+def frame_controller(context):
+    scn = bpy.context.scene
+        
+    print("Frame Change", scn.frame_current)
+    if (scn.frame_current is (delta_frame + 1)):
+        bpy.ops.screen.animation_cancel(restore_frame = False)
+        
+bpy.app.handlers.frame_change_pre.append(frame_controller)
+
+class MenuPanel(bpy.types.Panel):
     bl_label = "Menu panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "TOOLS"
+    
+    '''@classmethod
+    def poll(cls, context):
+        return not bpy.data.objects is None'''
  
     def draw(self, context):
         layout = self.layout
         scn = context.scene
-        layout.prop(scn, "DropDownList")
+        #layout.prop(scn, "DropDownList")
+        layout.label("Coordinates:")
         
         col = layout.column()
-        col.label(text="Attributes:")
-       
+        ob = context.object
+        
+        #col.prop(ob, "location")
         col.prop(scn, "xCoord")
         col.prop(scn, "yCoord")
         col.prop(scn, "zCoord")
         layout.operator("update.button")
-        layout.operator("update.menuinfo")'''
         
-class Menu(bpy.types.Operator) :      
+'''class Menu(bpy.types.Operator) :      
     bl_idname = "visualizer.menu"  
     bl_label = "Menu Panel"  
     bl_options = {"REGISTER", "UNDO"}                                           
     
     print(bpy.data.objects)
     def gen_list():
-        if bpy.data.objects is None:
+        if (bpy.context.object == None):
             return [("NULL", "NULL", "It seems data hasn't been received yet")]
         else:
             return [(ob.name, ob.name, ob.type) for ob in bpy.data.objects]
@@ -219,14 +241,15 @@ class Menu(bpy.types.Operator) :
     def execute(self, context):
         for ob in bpy.data.objects:
             print(ob)
+        print(self.DropDownList)
         #bpy.ops.object.select_all(action='DESELECT')
-        obj = bpy.data.objects[self.DropDownList]
-        obj.select = True
+        if (self.DropDownList != "NULL"):
+            obj = bpy.data.objects[self.DropDownList]
+            obj.select = True
         
-        self.xCoord = obj.location.x
-        self.yCoord = obj.location.y
-        self.zCoord = obj.location.z
-        
+            self.xCoord = obj.location.x
+            self.yCoord = obj.location.y
+            self.zCoord = obj.location.z        
         #Node().create("node1")
 
         return {"FINISHED"}
@@ -241,7 +264,7 @@ class Menu(bpy.types.Operator) :
         col.prop(self, "xCoord")
         col.prop(self, "yCoord")
         col.prop(self, "zCoord")
-        layout.operator("update.button")
+        layout.operator("update.button")'''
         
 class UpdateButton(bpy.types.Operator):
     bl_idname = "update.button"
@@ -253,15 +276,23 @@ class UpdateButton(bpy.types.Operator):
             Node().create(name)
         
     def updateObjects(self):
+        scn = bpy.context.scene
+        
         for name in names:
-            Node().get(name).moveTo(list[name])
+            Node().get(name).moveTo(list[name], delta_frame)
+            
+        scn = bpy.context.scene
+        #current_frame = scn.frame_current
+        '''for i in range(delta_frame):
+            scn.frame_set(i)'''
     
     def execute(self, context):
-        win      = bpy.context.window
+        scn = bpy.context.scene
+        """win      = bpy.context.window
         scr      = win.screen
         areas3d  = [area for area in scr.areas if area.type == 'VIEW_3D']
         region   = [region for region in areas3d[0].regions if region.type == 'WINDOW']
-
+        
         override = {'window':win,
                     'screen':scr,
                     'area'  :areas3d[0],
@@ -269,12 +300,13 @@ class UpdateButton(bpy.types.Operator):
                     'scene' :bpy.context.scene,
                     'edit_object':bpy.context.edit_object,
                     'active_object':bpy.context.active_object,
-                    'blend_data':bpy.context.blend_data,
-                    'object':bpy.context.object
-                    }
+                    'blend_data':bpy.context.blend_data
+                    #'object':bpy.context.object
+                    }"""
         
-        Node().create("node1", override)
-        #Node().get("node1").moveTo((5, 0, 0), 40)
+        Node().create("node1")
+        Node().get("node1").moveTo((5, 0, 0), delta_frame)
+        bpy.ops.screen.animation_play()
         
         return{'FINISHED'}  
     
@@ -315,17 +347,17 @@ class UpdateButton(bpy.types.Operator):
         context.window_manager.modal_handler_add(self) # add modal handler!!!
         return {'RUNNING_MODAL'}'''
 
-def add_to_menu(self, context) :  
-    self.layout.operator("visualizer.menu", icon = "PLUGIN")  
+'''def add_to_menu(self, context) :  
+    self.layout.operator("visualizer.menu", icon = "PLUGIN")  '''
 
 def register() :  
     bpy.utils.register_module(__name__)       
-    bpy.types.VIEW3D_PT_tools_object.append(add_to_menu)
+    #bpy.types.VIEW3D_PT_tools_object.append(add_to_menu)
     #self.layout.operator("mesh.dropdownexample", icon = "PLUGIN")      
 
 def unregister() :  
     bpy.utils.unregister_module(__name__)   
-    bpy.types.VIEW3D_PT_tools_object.remove(add_to_menu)   
+    #bpy.types.VIEW3D_PT_tools_object.remove(add_to_menu)   
     
     #bpy.ops.mesh.primitive_cylinder_add()
     #ob = bpy.context.object
