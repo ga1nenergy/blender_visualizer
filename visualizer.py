@@ -14,7 +14,6 @@ from mathutils import Vector
 cursor = context.scene.cursor_location
 scene = bpy.context.scene
 delta_frame = 40
-scene.frame_set(1)
 previous_object = None
 sock = None
 port = 7777
@@ -22,18 +21,17 @@ port = 7777
 os.system('clear')
 
 def close_sock(sock):
-    sock.shutdown()
+    sock.shutdown(0)
     sock.close()
-    sys.exit(1)
 
 def connect(host):
-    global sock
     sock = socket.socket()
     try:
         sock.connect((host, port))
     except:
         print("Error: {0}".format(sys.exc_info()[0]))
         close_sock(sock)
+    return sock
 
 def makeMaterial(name, diffuse, specular, alpha):
     mat = bpy.data.materials.new(name)
@@ -72,6 +70,8 @@ class Node():
         
     def moveTo(self, pos, delta_frame):
         print(self.ob)
+        scn = bpy.context.scene
+        scn.frame_set(1)
         self.ob.select = True
         self.ob.keyframe_insert(data_path = 'location', frame = scene.frame_current)
         delta_path = tuple([pos[i] - self.ob.location[i] for i in range(3)])
@@ -79,7 +79,7 @@ class Node():
         bpy.ops.transform.translate(value = delta_path)
         self.ob.keyframe_insert(data_path = 'location', frame = scene.frame_current + delta_frame)
         self.ob.select = False
-        bpy.context.scene.frame_set(1)
+        scn.frame_set(1)
         
     def remove(self):
         context.scene.objects.unlink(self.ob)
@@ -158,36 +158,52 @@ class OBJECT_PT_MenuPanel(bpy.types.Panel):
 class UpdateButton(bpy.types.Operator):
     bl_idname = "update.button"
     bl_label = "Update"
+
+    list = None
     
     def getList(self):
         global sock
 
-        #0 - send list
-        command = bytes.encode("send_list")
+        print(sock)
+
+        if sock is None:
+            print("came here")
+            sock = connect('localhost')
+        #sock = connect('localhost')
+
+        print(sock)
+
+        command = "send_list"
+        print("Sent command: " + command)
+        command = command.encode()
         sock.send(command)
         #receive pickled data size
-        size = int(sock.recv(1024))
+        size = sock.recv(2)
+        size = size.decode()
+        print("Pickled data size: " + size)
         #receive list
-        pickled_list = sock.recv(size)
-        list = pickle.loads(pickled_list)
+        pickled_list = sock.recv(int(size))
+        self.list = pickle.loads(pickled_list)
+        print("Unpickled data: {0}".format(self.list))
 
-        self.names = list.keys()
+        names = self.list.keys()
         for name in names:
             Node().create(name)
         
     def updateObjects(self):
         scn = bpy.context.scene
         
+        names = self.list.keys()
         for name in names:
-            Node().get(name).moveTo(list[name], delta_frame)
+            Node().get(name).moveTo(self.list[name], delta_frame)
 
-    @classmethod
+    '''@classmethod
     def poll(cls, context):
         global sock
 
         if not sock:
             print("No connection to server")
-        return sock
+        return sock'''
     
     def execute(self, context):        
         #Node().create("node1")
@@ -208,8 +224,6 @@ def main():
     global sock
     
     register()
-
-    sock = connect('localhost')
     
 main()
 

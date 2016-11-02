@@ -31,19 +31,25 @@ create_connection(sock, host, port)
 conn, addr = sock.accept()
 
 print('Connected:' + str(addr))
-
-while True:
-    command = conn.recv(1024)
-    command = bytes.decode(command)
-    print ("Command: " + command)
-    if not command:
-        close_sock(conn)
-        sock.listen(1)
-        print("Listening port: " + str(port))
-        conn, addr = sock.accept()
-        print('Connected:' + str(addr))
-        continue
-    if (command == "send_list"):
-    	pickled_list = pickle.dumps(list)
-    	conn.send(sys.getsizeof(pickled_list))
-    	conn.send(pickled_list)
+try:
+    while True:
+        command = conn.recv(1024)
+        command = command.decode()
+        print ("Command: " + command)
+        if not command:
+            close_sock(conn)
+            sock.listen(1)
+            print("Listening port: " + str(port))
+            conn, addr = sock.accept()
+            print('Connected:' + str(addr))
+            continue
+        if (command == "send_list"):
+            pickled_list = pickle.dumps(list)
+            size = sys.getsizeof(pickled_list)
+            print("Size: " + str(size))
+            conn.send(str(size).encode())
+            conn.send(pickled_list)
+except:
+    print("Error: {0}".format(sys.exc_info()[0]))
+    close_sock(sock)
+    sys.exit(1)
