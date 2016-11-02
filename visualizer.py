@@ -1,6 +1,9 @@
 import bpy
 import os
 import time
+import socket
+import pickle
+import sys
 from mathutils import Euler, Vector
 from math import sqrt, atan, acos, pi, asin, atan2
 from bpy import context
@@ -10,15 +13,27 @@ from mathutils import Vector
 
 cursor = context.scene.cursor_location
 scene = bpy.context.scene
-objects = {}
-array = []
-keys = []
-isModified = True
 delta_frame = 40
 scene.frame_set(1)
 previous_object = None
+sock = None
+port = 7777
 
 os.system('clear')
+
+def close_sock(sock):
+    sock.shutdown()
+    sock.close()
+    sys.exit(1)
+
+def connect(host):
+    global sock
+    sock = socket.socket()
+    try:
+        sock.connect((host, port))
+    except:
+        print("Error: {0}".format(sys.exc_info()[0]))
+        close_sock(sock)
 
 def makeMaterial(name, diffuse, specular, alpha):
     mat = bpy.data.materials.new(name)
@@ -70,12 +85,6 @@ class Node():
         context.scene.objects.unlink(self.ob)
         bpy.data.objects.remove(self.ob)
         
-def gen_list():
-        if (len(bpy.data.objects) is not 0):
-            return [(ob.name, ob.name, ob.type) for ob in bpy.data.objects]
-        else:
-            return [("None", "None", "It seems data hasn't been received yet")]
-        
 def initSceneProperties(scn):
  
     bpy.types.Scene.xCoord = FloatProperty(
@@ -108,11 +117,11 @@ def scene_update(context):
         scn.yCoord = ob.location.y
         scn.zCoord = ob.location.z
     
-    if ((previous_object != scn.current_object) and (bpy.data.objects[scn.current_object] != None)):
+    '''if ((previous_object != scn.current_object)):
         for ob in bpy.data.objects:
             ob.select = False
         bpy.data.objects[scn.current_object].select = True
-        previous_object = scn.current_object
+        previous_object = scn.current_object'''
      
 bpy.app.handlers.scene_update_post.append(scene_update)
 
@@ -150,7 +159,18 @@ class UpdateButton(bpy.types.Operator):
     bl_idname = "update.button"
     bl_label = "Update"
     
-    def getList(self, list):
+    def getList(self):
+        global sock
+
+        #0 - send list
+        command = bytes.encode("send_list")
+        sock.send(command)
+        #receive pickled data size
+        size = int(sock.recv(1024))
+        #receive list
+        pickled_list = sock.recv(size)
+        list = pickle.loads(pickled_list)
+
         self.names = list.keys()
         for name in names:
             Node().create(name)
@@ -160,16 +180,23 @@ class UpdateButton(bpy.types.Operator):
         
         for name in names:
             Node().get(name).moveTo(list[name], delta_frame)
+
+    @classmethod
+    def poll(cls, context):
+        global sock
+
+        if not sock:
+            print("No connection to server")
+        return sock
     
     def execute(self, context):        
-        Node().create("node1")
-        Node().get("node1").moveTo((5, 0, 0), delta_frame)
+        #Node().create("node1")
+        #Node().get("node1").moveTo((5, 0, 0), delta_frame)
+        self.getList()
+        self.updateObjects()
         bpy.ops.screen.animation_play()
         
         return{'FINISHED'}  
-
-def add_to_menu(self, context) :  
-    self.layout.operator("dropdown.list", icon = "PLUGIN")  
 
 def register() :  
     bpy.utils.register_module(__name__)            
@@ -178,8 +205,11 @@ def unregister() :
     bpy.utils.unregister_module(__name__)     
     
 def main():
-    global objects
+    global sock
     
     register()
+
+    sock = connect('localhost')
     
 main()
+
