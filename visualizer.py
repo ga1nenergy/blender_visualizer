@@ -13,6 +13,7 @@ from mathutils import Vector
 
 cursor = context.scene.cursor_location
 scene = bpy.context.scene
+lines = None
 delta_frame = 40
 previous_object = None
 sock = None
@@ -44,6 +45,90 @@ def makeMaterial(name, diffuse, specular, alpha):
     mat.alpha = alpha
     mat.ambient = 1
     return mat
+
+class Line():
+    material =  makeMaterial('Red', (1,0,0), (1,1,1), 1)
+
+    #def get_by_name(self, name):
+    def get(self, name):
+        try:
+            self.ob =  bpy.data.objects[name]
+        except:
+            print("Object" + name + "not found")
+        finally:
+            return self
+
+    '''def get_by_node(self, node1, node2):
+        if lines[(node1, node2)]:
+            self.ob = bpy.data.objects[lines[(node1, node2)]]
+        elif lines[(node2, node1)]:
+            self.ob = bpy.data.objects[lines[(node2, node1)]]
+        elif:
+            print("Line connecting {0} and {1} not found".format(node1, node2))
+        return self'''
+
+    def link(self, node1, node2):
+        if self.ob is None:
+            return
+        node1 = bpy.data.objects[node1]
+        node2 = bpy.data.objects[node2]
+        bpy.ops.mesh.primitive_cylinder_add()
+        ob = bpy.context.object
+        ob.data.materials.append(self._material)
+        ob.location = tuple([(node1.location[i] + node2.location[i]) / 2 for i in range(3)])
+        dist = 0
+        for i in range(3):
+            dist += (node1.location[i] - node2.location[i])**2
+        ob.scale = (0.1, 0.1, sqrt(dist)/2)
+        vector = Vector((node2.location.x - node1.location.x, node2.location.y - node1.location.y, node2.location.z - node1.location.z))
+    
+        ob.rotation_mode = 'QUATERNION'
+        ob.rotation_quaternion = vector.to_track_quat('Z','Y')
+
+        ob.name = name
+        ob.show_name = True
+
+    def follow(self, node1, node2):
+        global lines
+        scn = bpy.context.scene
+        
+        self.ob.select = True
+        scn.frame_set(delta_frame + 1)
+        node1_loc = bpy.data.objects[node1].location
+        node2_loc = bpy.data.objects[node2].location
+
+        new_loc = tuple([(node1_loc[i] + node2_loc[i])/2 for i in range(3)])
+        
+        dist = 0
+        for i in range(3):
+            dist += (node1_loc[i] - node2_loc[i])**2
+        new_scale = (0.1, 0.1, sqrt(dist)/2)
+
+        vector = Vector([(node2_loc[i] - node1_loc[i]) for i in range(3)])
+
+        scn.frame_set(1)
+        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
+        self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current)
+        self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current)
+
+        delta_path = tuple([new_loc[i] - self.ob.location[i] for i in range(3)])
+        
+        print('Line' + self.ob.name)
+        print('delta_path = {0}'.format(delta_path))
+        print('new_scale = {0}'.format(new_scale))
+        print('vector = {0}'.format(vector))
+        bpy.ops.transform.translate(value = delta_path)
+        self.ob.scale = new_scale
+        self.ob.rotation_quaternion = vector.to_track_quat('Z','Y')
+        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current + delta_frame)
+
+        scn.frame_set(1)
+
+    def remove(self):
+        scene.objects.unlink(self.ob)
+        bpy.data.objects.remove(self.ob)        
         
 class Node():
     material = makeMaterial('Blue', (0,0,1), (0.5,0.5,0), 1)    
@@ -51,7 +136,6 @@ class Node():
     def get(self, name):
         try:
             self.ob = bpy.data.objects[name]
-            
         except:
             print("Node: Object " + name + " is not found")
         finally:
@@ -70,14 +154,16 @@ class Node():
         
     def moveTo(self, pos, delta_frame):
         print(self.ob)
+        if not self.ob:
+            return None
         scn = bpy.context.scene
         scn.frame_set(1)
         self.ob.select = True
-        self.ob.keyframe_insert(data_path = 'location', frame = scene.frame_current)
+        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
         delta_path = tuple([pos[i] - self.ob.location[i] for i in range(3)])
         print('delta_path = {0}'.format(delta_path))
         bpy.ops.transform.translate(value = delta_path)
-        self.ob.keyframe_insert(data_path = 'location', frame = scene.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current + delta_frame)
         self.ob.select = False
         scn.frame_set(1)
         
@@ -117,11 +203,11 @@ def scene_update(context):
         scn.yCoord = ob.location.y
         scn.zCoord = ob.location.z
     
-    '''if ((previous_object != scn.current_object)):
+    if ((previous_object != scn.current_object)):
         for ob in bpy.data.objects:
             ob.select = False
         bpy.data.objects[scn.current_object].select = True
-        previous_object = scn.current_object'''
+        previous_object = scn.current_object
      
 bpy.app.handlers.scene_update_post.append(scene_update)
 
@@ -178,7 +264,7 @@ class UpdateButton(bpy.types.Operator):
         command = command.encode()
         sock.send(command)
         #receive pickled data size
-        size = sock.recv(2)
+        size = sock.recv(10)
         size = size.decode()
         print("Pickled data size: " + size)
         #receive list
@@ -186,16 +272,26 @@ class UpdateButton(bpy.types.Operator):
         self.list = pickle.loads(pickled_list)
         print("Unpickled data: {0}".format(self.list))
 
-        names = self.list.keys()
-        for name in names:
-            Node().create(name)
+    def createObjects(self):
+        for item in self.list.items():
+            node, location, linked_node, line_name = item
+            Node().create(node)
+            Line().link(node, linked_node, line_name)
         
     def updateObjects(self):
         scn = bpy.context.scene
         
-        names = self.list.keys()
-        for name in names:
-            Node().get(name).moveTo(self.list[name], delta_frame)
+        #moving nodes and lines, if exist
+        #names = self.list.keys()
+        for item in self.list.items():
+            node, location, linked_node, line_name = item
+            Node().get(node).moveTo(location, delta_frame)
+            Line().get(line_name).follow(node1, node2)
+
+        #moving lines, if exist
+
+
+
 
     '''@classmethod
     def poll(cls, context):
@@ -209,6 +305,7 @@ class UpdateButton(bpy.types.Operator):
         #Node().create("node1")
         #Node().get("node1").moveTo((5, 0, 0), delta_frame)
         self.getList()
+        self.createObjects()
         self.updateObjects()
         bpy.ops.screen.animation_play()
         

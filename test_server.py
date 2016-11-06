@@ -7,7 +7,7 @@ import sys
 port = 7777
 host = ''
 
-list = {"node1":(5, 0, 0)}
+list = {"node1":(5, 0, 0), "node2":(3, 0, 0)}
 sock = socket.socket()
 
 def create_connection(sock, host, port):
