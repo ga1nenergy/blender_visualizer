@@ -16,8 +16,11 @@ scene = bpy.context.scene
 lines = None
 delta_frame = 40
 previous_object = None
-sock = None
-port = 7777
+port = 9000
+bpy.data.scenes["Scene"].frame_start = 0
+bpy.data.scenes["Scene"].frame_end = 300000
+scene.frame_set(0)
+previous_frame = None
 
 os.system('clear')
 
@@ -27,6 +30,7 @@ def close_sock(sock):
 
 def connect(host):
     sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.connect((host, port))
     except:
@@ -57,15 +61,6 @@ class Line():
             print("Object" + name + "not found")
         finally:
             return self
-
-    '''def get_by_node(self, node1, node2):
-        if lines[(node1, node2)]:
-            self.ob = bpy.data.objects[lines[(node1, node2)]]
-        elif lines[(node2, node1)]:
-            self.ob = bpy.data.objects[lines[(node2, node1)]]
-        elif:
-            print("Line connecting {0} and {1} not found".format(node1, node2))
-        return self'''
 
     def link(self, node1, node2):
         if self.ob is None:
@@ -141,23 +136,25 @@ class Node():
         finally:
             return self
             
-    def create(self, name, override = None, origin = cursor):
-        if override is not None:
-            bpy.ops.mesh.primitive_uv_sphere_add(override, location = origin)
-        else:
+    def create(self, name, origin = (0, 0, 0)):
+        try:
+            bpy.data.objects[name]
+        except:
             bpy.ops.mesh.primitive_uv_sphere_add(location = origin)
-        ob = bpy.context.object
-        ob.data.materials.append(self.material)
-        ob.name = name
-        ob.show_name = True
-        bpy.ops.object.mode_set(mode = "OBJECT")
-        
+            ob = bpy.context.object
+            ob.data.materials.append(self.material)
+            ob.name = name
+            ob.show_name = True
+            bpy.ops.object.mode_set(mode = "OBJECT")
+        else:
+            return
+
     def moveTo(self, pos, delta_frame):
         print(self.ob)
         if not self.ob:
             return None
         scn = bpy.context.scene
-        scn.frame_set(1)
+        first_frame = scn.frame_current
         self.ob.select = True
         self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
         delta_path = tuple([pos[i] - self.ob.location[i] for i in range(3)])
@@ -165,7 +162,8 @@ class Node():
         bpy.ops.transform.translate(value = delta_path)
         self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current + delta_frame)
         self.ob.select = False
-        scn.frame_set(1)
+        scn.frame_set(first_frame)
+
         
     def remove(self):
         context.scene.objects.unlink(self.ob)
@@ -195,15 +193,14 @@ initSceneProperties(bpy.context.scene)
 def scene_update(context):
     global previous_object
     scn = bpy.context.scene
-    if bpy.data.objects.is_updated:
-        print("One or more objects were updated!")
-        
+    if bpy.data.objects.is_updated:        
         ob = bpy.context.object
         scn.xCoord = ob.location.x
         scn.yCoord = ob.location.y
         scn.zCoord = ob.location.z
     
-    if ((previous_object != scn.current_object)):
+
+    if ((previous_object != scn.current_object) and (scn.current_object != '')):
         for ob in bpy.data.objects:
             ob.select = False
         bpy.data.objects[scn.current_object].select = True
@@ -212,10 +209,12 @@ def scene_update(context):
 bpy.app.handlers.scene_update_post.append(scene_update)
 
 def frame_controller(context):
+    global previous_frame
     scn = bpy.context.scene
         
     print("Frame Change", scn.frame_current)
-    if (scn.frame_current is (delta_frame + 1)):
+    if (scn.frame_current % (delta_frame) == 0) and (scn.frame_current != previous_frame):
+        previous_frame = scn.frame_current
         bpy.ops.screen.animation_cancel(restore_frame = False)
         
 bpy.app.handlers.frame_change_pre.append(frame_controller)
@@ -248,35 +247,27 @@ class UpdateButton(bpy.types.Operator):
     list = None
     
     def getList(self):
-        global sock
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        print(sock)
+        sock.connect(('localhost', 9000))
 
-        if sock is None:
-            print("came here")
-            sock = connect('localhost')
-        #sock = connect('localhost')
-
-        print(sock)
-
-        command = "send_list"
-        print("Sent command: " + command)
-        command = command.encode()
-        sock.send(command)
-        #receive pickled data size
-        size = sock.recv(10)
+        size = sock.recv(2)
         size = size.decode()
         print("Pickled data size: " + size)
         #receive list
         pickled_list = sock.recv(int(size))
         self.list = pickle.loads(pickled_list)
         print("Unpickled data: {0}".format(self.list))
+        sock.shutdown(0)
+        sock.close()
 
     def createObjects(self):
         for item in self.list.items():
-            node, location, linked_node, line_name = item
+            #node, location, linked_node, line_name = item
+            node, location = item
             Node().create(node)
-            Line().link(node, linked_node, line_name)
+            #Line().link(node, linked_node, line_name)
         
     def updateObjects(self):
         scn = bpy.context.scene
@@ -284,9 +275,10 @@ class UpdateButton(bpy.types.Operator):
         #moving nodes and lines, if exist
         #names = self.list.keys()
         for item in self.list.items():
-            node, location, linked_node, line_name = item
+            #node, location, linked_node, line_name = item
+            node, location = item
             Node().get(node).moveTo(location, delta_frame)
-            Line().get(line_name).follow(node1, node2)
+            #Line().get(line_name).follow(node1, node2)
 
         #moving lines, if exist
 
