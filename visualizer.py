@@ -12,14 +12,14 @@ from math import sin, cos, radians
 from mathutils import Vector
 
 cursor = context.scene.cursor_location
-scene = bpy.context.scene
+scn = bpy.context.scene
 lines = None
 delta_frame = 40
 previous_object = None
 port = 9000
 bpy.data.scenes["Scene"].frame_start = 0
 bpy.data.scenes["Scene"].frame_end = 300000
-scene.frame_set(0)
+scn.frame_set(0)
 previous_frame = None
 
 os.system('clear')
@@ -62,15 +62,22 @@ class Line():
         finally:
             return self
 
-    def link(self, node1, node2):
-        if self.ob is None:
-            return
+    def link(self, node1, node2, name = None):
+        global delta_frame
+        
+        scn = bpy.context.scene
+        
+        if name is None:
+            name = node1 + "+" + node2
         node1 = bpy.data.objects[node1]
         node2 = bpy.data.objects[node2]
+        if node1 is None or node2 is None:
+            return
         bpy.ops.mesh.primitive_cylinder_add()
         ob = bpy.context.object
-        ob.data.materials.append(self._material)
+        ob.data.materials.append(self.material)
         ob.location = tuple([(node1.location[i] + node2.location[i]) / 2 for i in range(3)])
+        print("line location: {0}".format(ob.location))
         dist = 0
         for i in range(3):
             dist += (node1.location[i] - node2.location[i])**2
@@ -84,13 +91,18 @@ class Line():
         ob.show_name = True
 
     def follow(self, node1, node2):
-        global lines
+        global lines, delta_frame
+        if self.ob is None:
+            return
         scn = bpy.context.scene
         
         self.ob.select = True
-        scn.frame_set(delta_frame + 1)
+        first_frame = scn.frame_current
+        scn.frame_set(first_frame + delta_frame)
         node1_loc = bpy.data.objects[node1].location
+        print("final node1 loc: {0}".format(node1_loc))
         node2_loc = bpy.data.objects[node2].location
+        print("final node2 loc: {0}".format(node2_loc))
 
         new_loc = tuple([(node1_loc[i] + node2_loc[i])/2 for i in range(3)])
         
@@ -101,7 +113,7 @@ class Line():
 
         vector = Vector([(node2_loc[i] - node1_loc[i]) for i in range(3)])
 
-        scn.frame_set(1)
+        scn.frame_set(first_frame)
         self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
         self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current)
         self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current)
@@ -119,7 +131,7 @@ class Line():
         self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current + delta_frame)
         self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current + delta_frame)
 
-        scn.frame_set(1)
+        scn.frame_set(first_frame)
 
     def remove(self):
         scene.objects.unlink(self.ob)
@@ -149,10 +161,13 @@ class Node():
         else:
             return
 
-    def moveTo(self, pos, delta_frame):
+    def moveTo(self, pos):
         print(self.ob)
+        global delta_frame
         if not self.ob:
             return None
+        for ob in bpy.data.objects:
+            ob.select = False
         scn = bpy.context.scene
         first_frame = scn.frame_current
         self.ob.select = True
@@ -212,7 +227,7 @@ def frame_controller(context):
     global previous_frame
     scn = bpy.context.scene
         
-    print("Frame Change", scn.frame_current)
+    #print("Frame Change", scn.frame_current)
     if (scn.frame_current % (delta_frame) == 0) and (scn.frame_current != previous_frame):
         previous_frame = scn.frame_current
         bpy.ops.screen.animation_cancel(restore_frame = False)
@@ -277,7 +292,7 @@ class UpdateButton(bpy.types.Operator):
         for item in self.list.items():
             #node, location, linked_node, line_name = item
             node, location = item
-            Node().get(node).moveTo(location, delta_frame)
+            Node().get(node).moveTo(location)
             #Line().get(line_name).follow(node1, node2)
 
         #moving lines, if exist
@@ -311,6 +326,18 @@ def unregister() :
     
 def main():
     global sock
+
+    #Node().create("node1")
+    #Node().create("node2")
+    #Line().link("node1", "node2")
+    #Node().get("node1").moveTo((5,0,0))
+    #Line().get("node1+node2").follow("node1", "node2")
+    #scn.frame_set(scn.frame_current + delta_frame)
+    #Node().get("node1").moveTo((0,5,0))
+    #Line().get("node1+node2").follow("node1", "node2")
+    #scn.frame_set(scn.frame_current + delta_frame)
+    #Node().get("node1").moveTo((0,0,5))
+    #Line().get("node1+node2").follow("node1", "node2")
     
     register()
     
