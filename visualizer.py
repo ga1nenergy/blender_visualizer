@@ -15,7 +15,9 @@ cursor = context.scene.cursor_location
 scn = bpy.context.scene
 lines = None
 delta_frame = 40
-previous_object = None
+previous_object = ''
+first_frame = 0
+adr = 'localhost'
 port = 9000
 bpy.data.scenes["Scene"].frame_start = 0
 bpy.data.scenes["Scene"].frame_end = 300000
@@ -163,13 +165,13 @@ class Node():
 
     def moveTo(self, pos):
         print(self.ob)
-        global delta_frame
+        global delta_frame, first_frame
+        scn = bpy.context.scene
         if not self.ob:
             return None
         for ob in bpy.data.objects:
             ob.select = False
-        scn = bpy.context.scene
-        first_frame = scn.frame_current
+        scn.frame_set(first_frame)
         self.ob.select = True
         self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
         delta_path = tuple([pos[i] - self.ob.location[i] for i in range(3)])
@@ -202,23 +204,31 @@ def initSceneProperties(scn):
     scn["zCoord"] = 0.0
     
     bpy.types.Scene.current_object = bpy.props.StringProperty(name = "Object")
+
+    bpy.types.Scene.eval = bpy.props.StringProperty(name = "Eval")
     
 initSceneProperties(bpy.context.scene)
 
 def scene_update(context):
     global previous_object
     scn = bpy.context.scene
-    if bpy.data.objects.is_updated:        
-        ob = bpy.context.object
-        scn.xCoord = ob.location.x
-        scn.yCoord = ob.location.y
-        scn.zCoord = ob.location.z
+    #if bpy.data.objects.is_updated:        
+    for ob in bpy.data.objects:
+        if ob.select:
+            scn.xCoord = ob.location.x
+            scn.yCoord = ob.location.y
+            scn.zCoord = ob.location.z
+            break
+        scn.xCoord = 0
+        scn.yCoord = 0
+        scn.zCoord = 0
     
 
-    if ((previous_object != scn.current_object) and (scn.current_object != '')):
+    if (previous_object != scn.current_object):
         for ob in bpy.data.objects:
             ob.select = False
-        bpy.data.objects[scn.current_object].select = True
+        if (scn.current_object != ''):
+            bpy.data.objects[scn.current_object].select = True
         previous_object = scn.current_object
      
 bpy.app.handlers.scene_update_post.append(scene_update)
@@ -244,7 +254,7 @@ class OBJECT_PT_MenuPanel(bpy.types.Panel):
         layout = self.layout
         scn = context.scene
         
-        layout.prop_search(scene, "current_object", scene, "objects")
+        layout.prop_search(scn, "current_object", scn, "objects")
         layout.label("Coordinates:")
         
         col = layout.column()
@@ -253,6 +263,7 @@ class OBJECT_PT_MenuPanel(bpy.types.Panel):
         col.prop(scn, "xCoord")
         col.prop(scn, "yCoord")
         col.prop(scn, "zCoord")
+        col.prop(scn, "eval")
         layout.operator("update.button")
         
 class UpdateButton(bpy.types.Operator):
@@ -262,20 +273,41 @@ class UpdateButton(bpy.types.Operator):
     list = None
     
     def getList(self):
+        global adr, port
+        scn = bpy.context.scene
+
         sock = socket.socket()
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        sock.connect(('localhost', 9000))
+        try:
+            sock.connect((adr, port))
+        except:
+            self.report({'ERROR'}, "Cannot connect to %s using port %d" % (adr, port))
+            return 1;
 
-        size = sock.recv(2)
-        size = size.decode()
-        print("Pickled data size: " + size)
+        size = sock.recv(1024)
+        size = int(size.decode())
+        print("Pickled data size: %d" % size)
         #receive list
-        pickled_list = sock.recv(int(size))
+        pickled_list = sock.recv(size)
+        #pickled_list = b''
+        #print(size)
+        #print(pickled_list)
+        #while len(pickled_list) < size:
+        #    data = sock.recv(1024)
+        #    if not data:
+        #        self.report({'ERROR'}, "Socket closed %d bytes into a %d-byte message" % (len(pickled_list), size))
+        #        return 1
+        #    pickled_list += data
+        #    print(pickled_list)
         self.list = pickle.loads(pickled_list)
         print("Unpickled data: {0}".format(self.list))
+        if (scn.eval != ''):
+            print('im here')
+            sock.send(scn.eval.encode())
         sock.shutdown(0)
         sock.close()
+        return 0
 
     def createObjects(self):
         for item in self.list.items():
@@ -285,6 +317,7 @@ class UpdateButton(bpy.types.Operator):
             #Line().link(node, linked_node, line_name)
         
     def updateObjects(self):
+        global first_frame, delta_frame
         scn = bpy.context.scene
         
         #moving nodes and lines, if exist
@@ -294,9 +327,7 @@ class UpdateButton(bpy.types.Operator):
             node, location = item
             Node().get(node).moveTo(location)
             #Line().get(line_name).follow(node1, node2)
-
-        #moving lines, if exist
-
+        first_frame += delta_frame
 
 
 
@@ -311,7 +342,8 @@ class UpdateButton(bpy.types.Operator):
     def execute(self, context):        
         #Node().create("node1")
         #Node().get("node1").moveTo((5, 0, 0), delta_frame)
-        self.getList()
+        if (self.getList()):
+            return {'FINISHED'}
         self.createObjects()
         self.updateObjects()
         bpy.ops.screen.animation_play()
