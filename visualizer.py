@@ -283,28 +283,35 @@ class UpdateButton(bpy.types.Operator):
             sock.connect((adr, port))
         except:
             self.report({'ERROR'}, "Cannot connect to %s using port %d" % (adr, port))
-            return 1;
+            return 1
+
+        #time.sleep(10)
+
+        #sock.send(scn.eval.encode())
+        if (scn.eval == ''):
+            sock.send(str('None').encode())
+        else:
+            sock.send(scn.eval.encode())
 
         size = sock.recv(1024)
+
         size = int(size.decode())
         print("Pickled data size: %d" % size)
         #receive list
-        pickled_list = sock.recv(size)
-        #pickled_list = b''
+        pickled_list = sock.recv(size) #вот это работает
+        #pickled_list = b'' #если передавать этим способом, то куда то деваются ровно 37 байт
         #print(size)
         #print(pickled_list)
         #while len(pickled_list) < size:
-        #    data = sock.recv(1024)
+        #    data = sock.recv(size - len(pickled_list))
         #    if not data:
         #        self.report({'ERROR'}, "Socket closed %d bytes into a %d-byte message" % (len(pickled_list), size))
         #        return 1
         #    pickled_list += data
         #    print(pickled_list)
+        #    print(len(pickled_list))
         self.list = pickle.loads(pickled_list)
         print("Unpickled data: {0}".format(self.list))
-        if (scn.eval != ''):
-            print('im here')
-            sock.send(scn.eval.encode())
         sock.shutdown(0)
         sock.close()
         return 0
