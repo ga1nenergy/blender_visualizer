@@ -4,6 +4,8 @@ import time
 import socket
 import pickle
 import sys
+import re
+import json
 from mathutils import Euler, Vector
 from math import sqrt, atan, acos, pi, asin, atan2
 from bpy import context
@@ -23,21 +25,58 @@ bpy.data.scenes["Scene"].frame_start = first_frame
 bpy.data.scenes["Scene"].frame_end = 300000
 scn.frame_set(0)
 previous_frame = None
+objects = []
+is_connection_created = False
+sock = None
 
 os.system('clear')
 
+class List():
+    def __init__(self, data):
+        self.data = data
+    def __str__(self):
+        s = ''
+        for key in self.data.keys():
+            s += key + '\n'
+            for obj_name in self.data[key]:
+                s += '\t' + obj_name + '\n'
+        return s
+
+def recv_all(sock, size, chunk_size = 16):
+    json_data = b''
+    while len(json_data) < size:
+        data = sock.recv(chunk_size)
+        if not data:
+            self.report({'ERROR'}, 
+                        "Socket closed %d bytes into a %d-byte message" 
+                        % (len(json_data), size))
+            return None
+        json_data += data
+        print(json_data)
+        print(len(json_data))
+    return json_data
+
 def close_sock(sock):
+    global is_connection_created
+    is_connection_created = False
     sock.shutdown(0)
     sock.close()
+    sock = None
 
-def connect(host):
+def connect(host, port):
+    global is_connection_created
     sock = socket.socket()
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.connect((host, port))
     except:
-        print("Error: {0}".format(sys.exc_info()[0]))
-        close_sock(sock)
+        print({'ERROR'}, 
+              "Cannot connect to %s using port %d" 
+              % (adr, port))
+        if is_connection_created:
+            close_sock(sock)
+    if not is_connection_created:
+        is_connection_created = True
     return sock
 
 def makeMaterial(name, diffuse, specular, alpha):
@@ -78,13 +117,16 @@ class Line():
         bpy.ops.mesh.primitive_cylinder_add()
         ob = bpy.context.object
         ob.data.materials.append(self.material)
-        ob.location = tuple([(node1.location[i] + node2.location[i]) / 2 for i in range(3)])
+        ob.location = tuple([(node1.location[i] + node2.location[i]) / 2 
+                            for i in range(3)])
         print("line location: {0}".format(ob.location))
         dist = 0
         for i in range(3):
             dist += (node1.location[i] - node2.location[i])**2
         ob.scale = (0.1, 0.1, sqrt(dist)/2)
-        vector = Vector((node2.location.x - node1.location.x, node2.location.y - node1.location.y, node2.location.z - node1.location.z))
+        vector = Vector((node2.location.x - node1.location.x, 
+                         node2.location.y - node1.location.y, 
+                         node2.location.z - node1.location.z))
     
         ob.rotation_mode = 'QUATERNION'
         ob.rotation_quaternion = vector.to_track_quat('Z','Y')
@@ -118,7 +160,8 @@ class Line():
         scn.frame_set(first_frame)
         self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
         self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current)
-        self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current)
+        self.ob.keyframe_insert(data_path = 'rotation_quaternion', 
+                                frame = scn.frame_current)
 
         delta_path = tuple([new_loc[i] - self.ob.location[i] for i in range(3)])
         
@@ -129,9 +172,12 @@ class Line():
         bpy.ops.transform.translate(value = delta_path)
         self.ob.scale = new_scale
         self.ob.rotation_quaternion = vector.to_track_quat('Z','Y')
-        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current + delta_frame)
-        self.ob.keyframe_insert(data_path = 'scale', frame = scn.frame_current + delta_frame)
-        self.ob.keyframe_insert(data_path = 'rotation_quaternion', frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'location', 
+                                frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'scale', 
+                                frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'rotation_quaternion', 
+                                frame = scn.frame_current + delta_frame)
 
         scn.frame_set(first_frame)
 
@@ -140,19 +186,40 @@ class Line():
         bpy.data.objects.remove(self.ob)        
         
 class Node():
-    material = makeMaterial('Blue', (0,0,1), (0.5,0.5,0), 1)    
+    material = makeMaterial('Blue', (0,0,1), (0.5,0.5,0), 1)
+
+    def __init__(self, argv):
+        global objects
+        self.name = argv[0]
+        self.coords = argv[1]
+        self.extra_attribs = argv[2:]
+        self.create(self.name, self.coords)
+        objects.append(self)
+        print('objects in Node(): {0}'.format(objects))
+        #return self
+
+    def __del__(self):
+        global objects
+        objects.remove(self)
+        context.scene.objects.unlink(self.ob)
+        bpy.data.objects.remove(self.ob)
         
-    def get(self, name):
-        try:
-            self.ob = bpy.data.objects[name]
-        except:
-            print("Node: Object " + name + " is not found")
-        finally:
-            return self
+    def as_dict(self):
+        dict = {'name': self.name,
+                'coords': self.coords,
+                'extra_attribs': self.extra_attribs}
+        return dict
+    #def get(self, name):
+    #    try:
+    #        self.ob = bpy.data.objects[name]
+    #    except:
+    #        print("Node: Object " + name + " is not found")
+    #    finally:
+    #        return self
             
     def create(self, name, origin = (0, 0, 0)):
         try:
-            bpy.data.objects[name]
+            ob = bpy.data.objects[name]
         except:
             bpy.ops.mesh.primitive_uv_sphere_add(location = origin)
             ob = bpy.context.object
@@ -160,8 +227,8 @@ class Node():
             ob.name = name
             ob.show_name = True
             bpy.ops.object.mode_set(mode = "OBJECT")
-        else:
-            return
+        finally:
+            self.ob = ob
 
     def moveTo(self, pos):
         print(self.ob)
@@ -173,18 +240,20 @@ class Node():
             ob.select = False
         scn.frame_set(first_frame)
         self.ob.select = True
-        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current)
+        self.ob.keyframe_insert(data_path = 'location', 
+                                frame = scn.frame_current)
         delta_path = tuple([pos[i] - self.ob.location[i] for i in range(3)])
         print('delta_path = {0}'.format(delta_path))
         bpy.ops.transform.translate(value = delta_path)
-        self.ob.keyframe_insert(data_path = 'location', frame = scn.frame_current + delta_frame)
+        self.ob.keyframe_insert(data_path = 'location', 
+                                frame = scn.frame_current + delta_frame)
         self.ob.select = False
         scn.frame_set(first_frame)
 
         
-    def remove(self):
-        context.scene.objects.unlink(self.ob)
-        bpy.data.objects.remove(self.ob)
+    #def remove(self):
+    #    context.scene.objects.unlink(self.ob)
+    #    bpy.data.objects.remove(self.ob)
         
 def initSceneProperties(scn):
  
@@ -238,7 +307,7 @@ def frame_controller(context):
     scn = bpy.context.scene
         
     #print("Frame Change", scn.frame_current)
-    if (scn.frame_current % (delta_frame) == 0) and (scn.frame_current != previous_frame):
+    if ((scn.frame_current % delta_frame == 0) and (scn.frame_current != previous_frame)):
         previous_frame = scn.frame_current
         bpy.ops.screen.animation_cancel(restore_frame = False)
         
@@ -269,36 +338,102 @@ class OBJECT_PT_MenuPanel(bpy.types.Panel):
 class UpdateButton(bpy.types.Operator):
     bl_idname = "update.button"
     bl_label = "Update"
-
-    list = None
     
     def getList(self):
-        global adr, port
+        global adr, port, objects, is_connection_created, sock
         scn = bpy.context.scene
 
-        sock = socket.socket()
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        #sock = socket.socket()
+        #sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        try:
-            sock.connect((adr, port))
-        except:
-            self.report({'ERROR'}, "Cannot connect to %s using port %d" % (adr, port))
-            return 1
+        #try:
+        #    sock.connect((adr, port))
+        #except:
+        #    self.report({'ERROR'}, "Cannot connect to %s using port %d" % (adr, port))
+        #    return 1
+        if not is_connection_created:
+            sock = connect(adr, port)
+        if sock is None:
+            return
 
+        #if (scn.eval == ''):
+        #    sock.send(str('get all').encode())
+        #elif:
+        #    sock.send(json.dumps(scn.eval))
+
+        if scn.eval == '':
+            sock.send(json.dumps('get all').encode())
+        else:
+            
+
+        if (re.match('add', scn.eval)):
+            str = scn.eval.split()
+            if len(str) != 2:
+                print('Error: not enougn args (add)')
+                return
+            sock.send(json.dumps(scn.eval).encode())
+            for obj in objects:
+                if obj.name == str[2]:
+                    dict = obj.as_dict
+                    json_data = json.dumps(len(dict))
+                    sock.send(json_data.encode()) #size
+                    json_data = json.dumps(dict)
+                    sock.send(json_data.encode())
+                    if json.loads(recv_all(sock, size)) is None:
+                        print('Error: obj was not added to server')
+                        return
+            print('Error: object not found')
+        elif (re.match('get', scn.eval) or scn.eval == ''):
+            if scn.eval == '':
+                sock.send(json.dumps('get all'))
+            else:
+                sock.send(json.dumps(scn.eval))
+            res = json.loads(recv_all(sock, size))
+            if res is None:
+                print('Error: smthng with get')
+                return
+            str = scn.eval.split()
+            if len(str) == 2:
+                self.createObjects(res)
+                return
+            elif len(str) == 3:
+                for obj in objects:
+                    if obj.name == str[1]:
+                        print('%s: %s' % (str[2], obj.__dict__[str[2]]))
+                        break
+                return
+        elif (re.match('set', scn.eval)):
+            if json.loads(recv_all(sock, size)) is None:
+                print('Error: smthng with set')
+            return
+        elif (re.match('list', scn.eval)):
+            json_data = json.dumps(scn.eval).encode()
+            sock.sendall(json_data)
+            json_data = sock.recv(4)
+            print(json_data)
+            size = int(json.loads(json_data.decode()))
+            print(size)
+            list = List(json.loads(recv_all(sock, size).decode()))
+            if list.data is None:
+                print('Error: list is None')
+            else:
+                print(list)
+
+                    
         #time.sleep(10)
 
         #sock.send(scn.eval.encode())
-        if (scn.eval == ''):
-            sock.send(str('None').encode())
-        else:
-            sock.send(scn.eval.encode())
-
-        size = sock.recv(1024)
-
-        size = int(size.decode())
-        print("Pickled data size: %d" % size)
+        #if (scn.eval == ''):
+        #    sock.send(str('None').encode())
+        #else:
+        #    sock.send(scn.eval.encode())
+        #  
+        #size = sock.recv(1024)
+        #
+        #size = int(size.decode())
+        #print("Pickled data size: %d" % size)
         #receive list
-        pickled_list = sock.recv(size) #вот это работает
+        #pickled_list = sock.recv(size) #вот это работает
         #pickled_list = b'' #если передавать этим способом, то куда то деваются ровно 37 байт
         #print(size)
         #print(pickled_list)
@@ -310,29 +445,43 @@ class UpdateButton(bpy.types.Operator):
         #    pickled_list += data
         #    print(pickled_list)
         #    print(len(pickled_list))
-        self.list = pickle.loads(pickled_list)
-        print("Unpickled data: {0}".format(self.list))
-        sock.shutdown(0)
-        sock.close()
-        return 0
+        #self.list = pickle.loads(pickled_list)
+        #print("Unpickled data: {0}".format(self.list))
+        #sock.shutdown(0)
+        #sock.close()
+        #return 0
 
-    def createObjects(self):
-        for item in self.list.items():ё
-            #node, location, linked_node, line_name = item
-            node, location = item
-            Node().create(node)
-            #Line().link(node, linked_node, line_name)
+    def createObjects(self, list):
+        #for items in self.list.items():
+        #    node, location = item
+        #    Node().create(node)
+        #if list['a'] != None: #a == type
+        #    items = list['a']
+        #    for num in range(len(items)):
+        #        global objects = objects + Node(items[num])
+        #if list['b'] != None:
+        #keys = list.keys()
+        for key in list.keys():
+            if key == 'a':
+                map(lambda item: Node(item), list[key])
+            if key == 'b':
+                pass    # что-нибудь еще
+
+
         
     def updateObjects(self):
-        global first_frame, delta_frame
-        scn = bpy.context.scene
+        global first_frame, delta_frame, objects
+        #scn = bpy.context.scene
         
         #moving nodes and lines, if exist
         #names = self.list.keys()
-        for item in self.list.items():
-            #node, location, linked_node, line_name = item
-            node, location = item
-            Node().get(node).moveTo(location)
+        #for item in self.list.items():
+        #    node, location, linked_node, line_name = item
+        #    node, location = item
+        #    Node().get(node).moveTo(location)
+
+        for item in objects:
+            item.moveTo(item.coords)
             #Line().get(line_name).follow(node1, node2)
         first_frame += delta_frame
 
@@ -342,8 +491,8 @@ class UpdateButton(bpy.types.Operator):
         #Node().get("node1").moveTo((5, 0, 0), delta_frame)
         if (self.getList()):
             return {'FINISHED'}
-        self.createObjects()
-        self.updateObjects()
+        #self.createObjects()
+        #self.updateObjects()
         bpy.ops.screen.animation_play()
         
         return{'FINISHED'}  
@@ -355,7 +504,7 @@ def unregister() :
     bpy.utils.unregister_module(__name__)     
     
 def main():
-    global sock
+    global sock, objects, adr, port
 
     #Node().create("node1")
     #Node().create("node2")
@@ -368,10 +517,32 @@ def main():
     #scn.frame_set(scn.frame_current + delta_frame)
     #Node().get("node1").moveTo((0,0,5))
     #Line().get("node1+node2").follow("node1", "node2")
-    
+
     register()
-    print(Node.__name__)
-    print(Node.__dict__)
+    if not is_connection_created:
+        sock = connect(adr, port)
+
+    #проверка
+    list = {'a': [['node2', (5, 0, 0)]]}
+    print('keys: {0}'.format(list.keys()))
+    for key in list.keys():
+        if key == 'a':
+            #ap(lambda x: Node(x), list[key])   #tru skillz hacker style.
+                                                #не работает
+            items = list[key]                  #а это работает
+            for item in items:
+                Node(item)
+    #node = Node(['node2', (5, 0, 0)])
+    #print('node.__dict__ = {0}'.format(node.__dict__))
+    #for item in objects:
+    #    print(item.__dict__)
+    print(objects)
+    #print(node.__dict__)
+    #print(Node.__name__)
+    #print(Node.__dict__)
+    #list = List({'nodes': ('node1', 'node2', 'node3'), 
+    #             'lines': ('line1', 'line2')})
+    #print(list)
     
 main()
 
